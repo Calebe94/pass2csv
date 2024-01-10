@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# pass2csv
+# Convert passwords stored using the `pass` password manager into a KeePass-compatible format
+
+# This script is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This script is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this script. If not, see <https://www.gnu.org/licenses/>.
+
+[ -z "$PASS_PATH" ] && PASS_PATH="$HOME/.password-store"
+
+process_entry() {
+    local show_output
+    show_output=$(pass show "$1" 2>&1)
+
+    if grep -q "gpg:" <<< "$show_output"; then
+        return
+    fi
+
+    line_count=$(echo "$show_output" | wc -l)
+
+    if [ "$line_count" -eq 1 ]; then
+        username="$(basename "$1")"
+        password="$(pass "$1")"
+        url="$(dirname "$1")"
+        echo "$1;$username;$password;$url;Note"
+    else
+        password="$(grep -oP '(?<=^password: ).*' <<< "$show_output")"
+        user="$(grep -oP '(?<=^user: ).*' <<< "$show_output")"
+        url="$(grep -oP '(?<=^url: ).*' <<< "$show_output")"
+
+        echo "$1;$user;$password;$url;Note"
+    fi
+}
+
+echo "Title;Username;Password;URL;Notes"
+
+if [ -d ~/.password-store ]; then
+    find ~/.password-store -type d -name '.git'  -prune -o -type f -print | sed "s|${HOME}/.password-store/||; s/.gpg$//" | { while read -r entry; do process_entry "$entry"; done }
+else
+    echo "The .password-store directory does not exist or is inaccessible."
+fi
