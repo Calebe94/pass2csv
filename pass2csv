@@ -16,35 +16,57 @@
 # You should have received a copy of the GNU General Public License
 # along with this script. If not, see <https://www.gnu.org/licenses/>.
 
+#THREADS="$(nproc)"
+THREADS=8
+
 [ -z "$PASS_PATH" ] && PASS_PATH="$HOME/.password-store"
 
 process_entry() {
-    local show_output
-    show_output=$(pass show "$1" 2>&1)
+	local show_output
+	show_output=$(pass show "$1" 2>&1)
 
-    if grep -q "gpg:" <<< "$show_output"; then
-        return
-    fi
+	if grep -q "gpg:" <<< "$show_output"; then
+		return
+	fi
 
-    line_count=$(echo "$show_output" | wc -l)
+	line_count=$(echo "$show_output" | wc -l)
 
-    if [ "$line_count" -eq 1 ]; then
-        username="$(basename "$1")"
-        password="$(pass "$1")"
-        url="$(dirname "$1")"
-        echo "$url;$1;$username;$password;$url;Note"
-    else
-        password="$(grep -oP '(?<=^password: ).*' <<< "$show_output")"
-        user="$(grep -oP '(?<=^user: ).*' <<< "$show_output")"
-        url="$(grep -oP '(?<=^url: ).*' <<< "$show_output")"
+	group="$(dirname "$1")"
+	title="$(basename "$1")"
 
-        echo "$url;$1;$user;$password;$url;Note"
-    fi
+	if [ "$line_count" -eq 1 ]; then
+		username="$(basename "$1")"
+		password="$(pass "$1")"
+		url="$(dirname "$1")"
+	else
+		if grep -q '(?<=^user: ).*' <<< "$show_output"; then
+			username="$(grep -oP '(?<=^user: ).*' <<< "$show_output")"
+		else
+			username="$(basename "$1")"
+		fi
+		if grep -q '(?<=^password: ).*' <<< "$show_output"; then
+			password="$(<<< "$show_output" grep -oP '(?<=^password: ).*')"
+		else
+			password="$(<<< "$show_output" head -1)"
+		fi
+		url="$(grep -oP '(?<=^url: ).*' <<< "$show_output")"
+		note="$(grep -oP '(?<=^note: ).*' <<< "$show_output")"
+	fi
+	echo "\"$group\";\"$title\";\"$username\";\"${password//\"/\\\"}\";\"$url\";\"$note\""
 }
-echo "Group;Title;Username;Password;URL;Notes"
 
-if [ -d ~/.password-store ]; then
-    find ~/.password-store -type d -name '.git'  -prune -o -type f -print | sed "s|${HOME}/.password-store/||; s/.gpg$//" | { while read -r entry; do process_entry "$entry"; done }
-else
-    echo "The .password-store directory does not exist or is inaccessible."
+export -f process_entry
+
+
+echo '"Group";"Title";"Username";"Password";"URL";"Notes"'
+
+if [ ! -d "$PASS_PATH" ]; then
+	echo "The password store '$PASS_PATH' does not exist or is inaccessible."
 fi
+
+find "$PASS_PATH" \
+	-type d -name '.git' -prune \
+	-o -type f -name '*.gpg' -print0 \
+	| sed -z "s#$PASS_PATH##; s/.gpg$//" \
+	| xargs -0 -P "$THREADS" -I{} -- \
+		bash -c 'process_entry "$@"' _ "{}"
